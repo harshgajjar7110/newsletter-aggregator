@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+
+{% block content %}
+    <h2>Settings</h2>
+
+    <form method="POST">
+        <label for="gmail_label">Gmail Label to Watch:</label><br>
+        <input type="text" id="gmail_label" name="gmail_label" value="{{ label }}" style="width: 100%; padding: 8px; margin: 10px 0;">
+        <p><small>Enter the exact name of the Gmail label you want to sync (e.g., "Newsletters"). Leave empty to only search for "unsubscribe".</small></p>
+
+        <button type="submit" class="btn">Save Settings</button>
+    </form>
+{% endblock %}

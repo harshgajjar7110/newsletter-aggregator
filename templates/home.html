@@ -1,0 +1,20 @@
+{% extends 'base.html' %}
+
+{% block content %}
+    <h2>Senders</h2>
+    <div class="sender-list">
+        {% for sender in senders %}
+            <a href="/sender/{{ sender }}" class="sender-tag">{{ sender }}</a>
+        {% else %}
+            <p>No senders found. Try syncing!</p>
+        {% endfor %}
+    </div>
+
+    <h2>Latest Newsletters</h2>
+    {% for newsletter in latest %}
+        <div class="card">
+            <h3><a href="/newsletter/{{ newsletter.id }}">{{ newsletter.subject }}</a></h3>
+            <p><strong>From:</strong> {{ newsletter.sender }} | <strong>Date:</strong> {{ newsletter.date_received.strftime('%Y-%m-%d') }}</p>
+        </div>
+    {% endfor %}
+{% endblock %}

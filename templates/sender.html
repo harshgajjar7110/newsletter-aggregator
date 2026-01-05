@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+
+{% block content %}
+    <h2>Newsletters from {{ sender }}</h2>
+
+    {% for newsletter in newsletters %}
+        <div class="card">
+            <h3><a href="/newsletter/{{ newsletter.id }}">{{ newsletter.subject }}</a></h3>
+            <p><strong>Date:</strong> {{ newsletter.date_received.strftime('%Y-%m-%d %H:%M') }}</p>
+        </div>
+    {% else %}
+        <p>No newsletters found for this sender.</p>
+    {% endfor %}
+{% endblock %}

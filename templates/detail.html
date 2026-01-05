@@ -1,0 +1,25 @@
+{% extends 'base.html' %}
+
+{% block content %}
+    <h2>{{ newsletter.subject }}</h2>
+    <p><strong>From:</strong> {{ newsletter.sender }}</p>
+    <p><strong>Date:</strong> {{ newsletter.date_received.strftime('%Y-%m-%d %H:%M') }}</p>
+
+    <div style="margin: 20px 0; padding: 15px; background: #f9f9f9; border-radius: 5px;">
+        <h3>Listen</h3>
+        {% if newsletter.audio_path %}
+            <audio controls style="width: 100%">
+                <source src="/{{ newsletter.audio_path }}" type="audio/wav">
+                Your browser does not support the audio element.
+            </audio>
+            <p><small>Audio generated.</small></p>
+        {% else %}
+            <p>Audio not generated yet.</p>
+            <a href="/newsletter/{{ newsletter.id }}/listen" class="btn">Generate Audio</a>
+        {% endif %}
+    </div>
+
+    <div style="white-space: pre-wrap; font-family: monospace; background: #fff; padding: 15px; border: 1px solid #eee;">
+{{ newsletter.content_text }}
+    </div>
+{% endblock %}
