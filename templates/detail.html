@@ -1,25 +1,85 @@
-{% extends 'base.html' %}
+{% extends 'base.html' %} {% block content %}
+<h2>{{ newsletter.subject }}</h2>
+<p><strong>From:</strong> {{ newsletter.sender }}</p>
+<p>
+  <strong>Date:</strong> {{ newsletter.date_received.strftime('%Y-%m-%d %H:%M')
+  }}
+</p>
 
-{% block content %}
-    <h2>{{ newsletter.subject }}</h2>
-    <p><strong>From:</strong> {{ newsletter.sender }}</p>
-    <p><strong>Date:</strong> {{ newsletter.date_received.strftime('%Y-%m-%d %H:%M') }}</p>
+<div
+  style="margin: 20px 0; padding: 15px; background: #f9f9f9; border-radius: 5px"
+>
+  <h3>Listen</h3>
+  {% if newsletter.audio_path %}
+  <audio controls style="width: 100%">
+    <source src="/{{ newsletter.audio_path }}" type="audio/wav" />
+    Your browser does not support the audio element.
+  </audio>
+  <p><small>Audio generated.</small></p>
+  {% else %}
+  <p>Audio not generated yet.</p>
+  <a href="/newsletter/{{ newsletter.id }}/listen" class="btn"
+    >Generate Audio</a
+  >
+  {% endif %}
+</div>
 
-    <div style="margin: 20px 0; padding: 15px; background: #f9f9f9; border-radius: 5px;">
-        <h3>Listen</h3>
-        {% if newsletter.audio_path %}
-            <audio controls style="width: 100%">
-                <source src="/{{ newsletter.audio_path }}" type="audio/wav">
-                Your browser does not support the audio element.
-            </audio>
-            <p><small>Audio generated.</small></p>
-        {% else %}
-            <p>Audio not generated yet.</p>
-            <a href="/newsletter/{{ newsletter.id }}/listen" class="btn">Generate Audio</a>
-        {% endif %}
-    </div>
+<div
+  style="
+    white-space: pre-wrap;
+    font-family: monospace;
+    background: #fff;
+    padding: 15px;
+    border: 1px solid #eee;
+  "
+>
+  {% if audio_alignment %}
+  <style>
+    .highlight {
+      background-color: #ffeeba;
+      transition: background-color 0.2s;
+    }
+    .audio-sentence {
+      cursor: pointer;
+    }
+    .audio-sentence:hover {
+      background-color: #f0f0f0;
+    }
+  </style>
+  <div id="transcript">
+    {% for item in audio_alignment %}
+    <span
+      class="audio-sentence"
+      data-start="{{ item.start }}"
+      data-end="{{ item.end }}"
+      onclick="document.querySelector('audio').currentTime = {{ item.start }}; document.querySelector('audio').play();"
+      >{{ item.sentence }}</span
+    >
+    {% endfor %}
+  </div>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      const audio = document.querySelector("audio");
+      const spans = document.querySelectorAll(".audio-sentence");
 
-    <div style="white-space: pre-wrap; font-family: monospace; background: #fff; padding: 15px; border: 1px solid #eee;">
-{{ newsletter.content_text }}
-    </div>
+      if (audio) {
+        audio.addEventListener("timeupdate", function () {
+          const currentTime = audio.currentTime;
+          spans.forEach((span) => {
+            const start = parseFloat(span.dataset.start);
+            const end = parseFloat(span.dataset.end);
+            if (currentTime >= start && currentTime < end) {
+              span.classList.add("highlight");
+              // Optional: Scroll into view
+              // span.scrollIntoView({behavior: "smooth", block: "center"});
+            } else {
+              span.classList.remove("highlight");
+            }
+          });
+        });
+      }
+    });
+  </script>
+  {% else %} {{ newsletter.content_text }} {% endif %}
+</div>
 {% endblock %}

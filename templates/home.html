@@ -1,20 +1,28 @@
 {% extends 'base.html' %}
 
 {% block content %}
-    <h2>Senders</h2>
-    <div class="sender-list">
-        {% for sender in senders %}
-            <a href="/sender/{{ sender }}" class="sender-tag">{{ sender }}</a>
-        {% else %}
-            <p>No senders found. Try syncing!</p>
-        {% endfor %}
-    </div>
+    <h2>My Newsletters</h2>
 
-    <h2>Latest Newsletters</h2>
-    {% for newsletter in latest %}
-        <div class="card">
-            <h3><a href="/newsletter/{{ newsletter.id }}">{{ newsletter.subject }}</a></h3>
-            <p><strong>From:</strong> {{ newsletter.sender }} | <strong>Date:</strong> {{ newsletter.date_received.strftime('%Y-%m-%d') }}</p>
-        </div>
-    {% endfor %}
+    {% if grouped_newsletters %}
+        {% for sender, newsletters in grouped_newsletters.items() %}
+            <div class="sender-group" style="margin-bottom: 30px;">
+                <h3 style="border-bottom: 2px solid #eee; padding-bottom: 5px;">
+                    {{ sender }} <small style="color: #888; font-weight: normal; font-size: 0.8em;">({{ newsletters|length }})</small>
+                </h3>
+                <div class="newsletter-list">
+                    {% for newsletter in newsletters %}
+                        <div class="card" style="margin-left: 15px; border-left: 3px solid #ddd;">
+                            <h4><a href="/newsletter/{{ newsletter.id }}">{{ newsletter.subject }}</a></h4>
+                            <p style="font-size: 0.9em; color: #666;">
+                                Received: {{ newsletter.date_received.strftime('%Y-%m-%d %H:%M') }}
+                            </p>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        {% endfor %}
+    {% else %}
+        <p>No newsletters found. <a href="/sync">Sync now</a> to get started!</p>
+    {% endif %}
+
 {% endblock %}

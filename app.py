@@ -10,21 +10,19 @@ app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev_key_for_local_testing')
 @app.route('/')
 def home():
     session = get_session()
-    # Group by sender?
-    # Logic: Get all newsletters, order by date desc.
-    # Grouping usually happens in UI or query.
-    # Let's list unique senders first? Or just a flat list?
-    # Requirement: "list of newsltter group by sender"
-
-    # Let's get list of senders
-    senders = session.query(Newsletter.sender).distinct().all()
-    senders = [s[0] for s in senders]
-
-    # Get latest 5 newsletters for dashboard
-    latest = session.query(Newsletter).order_by(Newsletter.date_received.desc()).limit(5).all()
-
+    
+    # Fetch all newsletters order by date desc
+    all_newsletters = session.query(Newsletter).order_by(Newsletter.date_received.desc()).all()
+    
+    # Group by sender
+    grouped_newsletters = {}
+    for newsletter in all_newsletters:
+        if newsletter.sender not in grouped_newsletters:
+            grouped_newsletters[newsletter.sender] = []
+        grouped_newsletters[newsletter.sender].append(newsletter)
+        
     session.close()
-    return render_template('home.html', senders=senders, latest=latest)
+    return render_template('home.html', grouped_newsletters=grouped_newsletters)
 
 @app.route('/sender/<path:sender_name>')
 def sender_view(sender_name):
@@ -42,12 +40,22 @@ def newsletter_detail(newsletter_id):
         session.close()
         return "Not Found", 404
 
-    # Check if audio exists, if not, offer to generate?
-    # Or just generate on fly?
-    # Let's pass the object to template.
+    audio_alignment = None
+    if newsletter.audio_path:
+        # Assuming audio_path is relative to app root or static
+        # newsletter.audio_path is stored as 'static/audio/...'
+        # We need to find the json file.
+        # Check if it exists relative to current working dir
+        json_path = os.path.splitext(newsletter.audio_path)[0] + '.json'
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, 'r') as f:
+                    audio_alignment = json.load(f)
+            except Exception:
+                pass
 
     session.close()
-    return render_template('detail.html', newsletter=newsletter)
+    return render_template('detail.html', newsletter=newsletter, audio_alignment=audio_alignment)
 
 @app.route('/newsletter/<int:newsletter_id>/listen')
 def listen_newsletter(newsletter_id):
