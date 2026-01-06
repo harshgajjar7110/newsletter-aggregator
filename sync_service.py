@@ -9,9 +9,13 @@ from bs4 import BeautifulSoup
 from database import get_session, Newsletter, Settings
 from datetime import datetime
 import re
+import threading
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
+
+# Lock to prevent concurrent sync operations which can cause port conflicts during auth
+sync_lock = threading.Lock()
 
 def get_gmail_service():
     """Shows basic usage of the Gmail API.
@@ -31,9 +35,16 @@ def get_gmail_service():
             if not os.path.exists('credentials.json'):
                  raise FileNotFoundError("credentials.json not found. Please follow README instructions.")
 
-            flow = InstalledAppFlow.from_client_secrets_file(
-                'credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
+            try:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    'credentials.json', SCOPES)
+                # port=0 allows the OS to pick an available port to avoid collisions
+                creds = flow.run_local_server(port=0)
+            except OSError as e:
+                if "Address already in use" in str(e) or "Only one usage of each socket address" in str(e) or e.errno == 98 or e.errno == 10048:
+                    raise RuntimeError("Sync is already in progress or a port conflict occurred. Please try again in a few seconds.") from e
+                raise e
+
         # Save the credentials for the next run
         with open('token.json', 'w') as token:
             token.write(creds.to_json())
@@ -70,6 +81,16 @@ def parse_date(date_str):
         return datetime.now()
 
 def sync_gmail():
+    # Use lock to ensure only one sync happens at a time
+    if not sync_lock.acquire(blocking=False):
+        raise RuntimeError("Sync is already running. Please wait.")
+
+    try:
+        return _sync_gmail_impl()
+    finally:
+        sync_lock.release()
+
+def _sync_gmail_impl():
     service = get_gmail_service()
     session = get_session()
 
