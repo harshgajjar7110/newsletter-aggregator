@@ -1,85 +1,197 @@
-{% extends 'base.html' %} {% block content %}
-<h2>{{ newsletter.subject }}</h2>
-<p><strong>From:</strong> {{ newsletter.sender }}</p>
-<p>
-  <strong>Date:</strong> {{ newsletter.date_received.strftime('%Y-%m-%d %H:%M')
-  }}
-</p>
+{% extends 'base.html' %}
 
-<div
-  style="margin: 20px 0; padding: 15px; background: #f9f9f9; border-radius: 5px"
->
-  <h3>Listen</h3>
-  {% if newsletter.audio_path %}
-  <audio controls style="width: 100%">
-    <source src="/{{ newsletter.audio_path }}" type="audio/wav" />
-    Your browser does not support the audio element.
-  </audio>
-  <p><small>Audio generated.</small></p>
-  {% else %}
-  <p>Audio not generated yet.</p>
-  <a href="/newsletter/{{ newsletter.id }}/listen" class="btn"
-    >Generate Audio</a
-  >
-  {% endif %}
-</div>
+{% block content %}
+<style>
+    .player-controls {
+        position: sticky;
+        top: 0;
+        background: #1e1e1e;
+        padding: 15px;
+        border-bottom: 1px solid #333;
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+        margin: -20px -20px 20px -20px; /* Offset parent padding */
+    }
 
-<div
-  style="
-    white-space: pre-wrap;
-    font-family: monospace;
-    background: #fff;
-    padding: 15px;
-    border: 1px solid #eee;
-  "
->
-  {% if audio_alignment %}
-  <style>
+    .content-area {
+        font-family: Georgia, 'Times New Roman', Times, serif;
+        font-size: 1.2rem;
+        line-height: 1.8;
+        color: #ccc;
+        white-space: pre-wrap;
+    }
+
     .highlight {
-      background-color: #ffeeba;
-      transition: background-color 0.2s;
+        background-color: rgba(187, 134, 252, 0.3); /* Accent color with opacity */
+        color: #fff;
+        border-radius: 3px;
+        padding: 2px 0;
+        transition: background-color 0.2s;
     }
-    .audio-sentence {
-      cursor: pointer;
-    }
-    .audio-sentence:hover {
-      background-color: #f0f0f0;
-    }
-  </style>
-  <div id="transcript">
-    {% for item in audio_alignment %}
-    <span
-      class="audio-sentence"
-      data-start="{{ item.start }}"
-      data-end="{{ item.end }}"
-      onclick="document.querySelector('audio').currentTime = {{ item.start }}; document.querySelector('audio').play();"
-      >{{ item.sentence }}</span
-    >
-    {% endfor %}
-  </div>
-  <script>
-    document.addEventListener("DOMContentLoaded", function () {
-      const audio = document.querySelector("audio");
-      const spans = document.querySelectorAll(".audio-sentence");
 
-      if (audio) {
-        audio.addEventListener("timeupdate", function () {
-          const currentTime = audio.currentTime;
-          spans.forEach((span) => {
-            const start = parseFloat(span.dataset.start);
-            const end = parseFloat(span.dataset.end);
-            if (currentTime >= start && currentTime < end) {
-              span.classList.add("highlight");
-              // Optional: Scroll into view
-              // span.scrollIntoView({behavior: "smooth", block: "center"});
-            } else {
-              span.classList.remove("highlight");
-            }
-          });
-        });
-      }
-    });
-  </script>
-  {% else %} {{ newsletter.content_text }} {% endif %}
+    .status-badge {
+        font-size: 0.8rem;
+        padding: 2px 6px;
+        border-radius: 4px;
+        background: #333;
+        color: #aaa;
+        margin-left: 10px;
+    }
+</style>
+
+<div class="player-controls">
+    <button id="btn-play" class="btn btn-primary">Play</button>
+    <button id="btn-pause" class="btn" style="display:none;">Pause</button>
+    <button id="btn-stop" class="btn btn-danger">Stop</button>
+
+    <select id="select-speed" class="btn" style="background: #333;">
+        <option value="1">1.0x</option>
+        <option value="1.25">1.25x</option>
+        <option value="1.5">1.5x</option>
+        <option value="2">2.0x</option>
+    </select>
+
+    <button id="btn-done" class="btn btn-secondary" style="margin-left: auto;">Mark Done</button>
 </div>
+
+<div style="margin-bottom: 20px;">
+    <h2>{{ newsletter.subject }} <span id="status-display" class="status-badge">{{ newsletter.status }}</span></h2>
+    <p style="color: #888;">From: {{ newsletter.sender }} | {{ newsletter.date_received.strftime('%Y-%m-%d') }}</p>
+</div>
+
+<div id="newsletter-content" class="content-area"></div>
+
+<!-- Raw text hidden for JS to process -->
+<div id="raw-text" style="display:none;">{{ newsletter.content_text }}</div>
+
+<script>
+    const newsletterId = {{ newsletter.id }};
+    const rawText = document.getElementById('raw-text').innerText;
+    const contentArea = document.getElementById('newsletter-content');
+    const statusDisplay = document.getElementById('status-display');
+
+    // Split text into chunks (sentences/lines) for granular highlighting
+    // Regex splits by period, question mark, exclamation point, or newline, keeping the delimiter
+    const chunks = rawText.match(/[^.!?\n]+[.!?\n]*/g) || [rawText];
+
+    // Render chunks as spans
+    contentArea.innerHTML = chunks.map((chunk, index) =>
+        `<span id="chunk-${index}" class="text-chunk">${chunk}</span>`
+    ).join('');
+
+    let synth = window.speechSynthesis;
+    let utterance = null;
+    let currentChunkIndex = 0;
+    let isPlaying = false;
+
+    // Load voices (wait for them to be ready)
+    let voices = [];
+    window.speechSynthesis.onvoiceschanged = () => {
+        voices = window.speechSynthesis.getVoices();
+    };
+
+    function updateStatus(newStatus) {
+        fetch(`/api/newsletter/${newsletterId}/status`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({status: newStatus})
+        })
+        .then(res => res.json())
+        .then(data => {
+            if(data.success) {
+                statusDisplay.innerText = data.status;
+            }
+        });
+    }
+
+    function speakChunk(index) {
+        if (index >= chunks.length) {
+            stop();
+            updateStatus('done');
+            return;
+        }
+
+        currentChunkIndex = index;
+
+        // Highlight logic
+        document.querySelectorAll('.highlight').forEach(el => el.classList.remove('highlight'));
+        const activeSpan = document.getElementById(`chunk-${index}`);
+        if (activeSpan) {
+            activeSpan.classList.add('highlight');
+            activeSpan.scrollIntoView({behavior: "smooth", block: "center"});
+        }
+
+        // TTS logic
+        utterance = new SpeechSynthesisUtterance(chunks[index]);
+        utterance.rate = parseFloat(document.getElementById('select-speed').value);
+
+        // Optional: Select a better voice
+        // const preferredVoice = voices.find(v => v.name.includes("Google US English"));
+        // if (preferredVoice) utterance.voice = preferredVoice;
+
+        utterance.onend = () => {
+            if (isPlaying) {
+                speakChunk(index + 1);
+            }
+        };
+
+        utterance.onerror = (e) => {
+            console.error("TTS Error:", e);
+        };
+
+        synth.speak(utterance);
+    }
+
+    function play() {
+        if (isPlaying) return; // Already playing
+        isPlaying = true;
+
+        document.getElementById('btn-play').style.display = 'none';
+        document.getElementById('btn-pause').style.display = 'inline-block';
+
+        updateStatus('in_progress');
+
+        if (synth.paused) {
+            synth.resume();
+        } else {
+            speakChunk(currentChunkIndex);
+        }
+    }
+
+    function pause() {
+        isPlaying = false;
+        document.getElementById('btn-play').style.display = 'inline-block';
+        document.getElementById('btn-pause').style.display = 'none';
+        synth.cancel(); // Stop speaking immediately
+    }
+
+    function stop() {
+        isPlaying = false;
+        currentChunkIndex = 0;
+        document.getElementById('btn-play').style.display = 'inline-block';
+        document.getElementById('btn-pause').style.display = 'none';
+        document.querySelectorAll('.highlight').forEach(el => el.classList.remove('highlight'));
+        synth.cancel();
+    }
+
+    // Event Listeners
+    document.getElementById('btn-play').addEventListener('click', play);
+    document.getElementById('btn-pause').addEventListener('click', pause);
+    document.getElementById('btn-stop').addEventListener('click', stop);
+
+    document.getElementById('btn-done').addEventListener('click', () => {
+        stop();
+        updateStatus('done');
+        window.location.href = '/'; // Go back home
+    });
+
+    // Cleanup when leaving page
+    window.onbeforeunload = () => {
+        synth.cancel();
+    };
+
+</script>
 {% endblock %}

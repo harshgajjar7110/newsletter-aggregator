@@ -10,7 +10,6 @@ from database import get_session, Newsletter, Settings
 from datetime import datetime
 import re
 import threading
-import concurrent.futures
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
@@ -18,28 +17,45 @@ SCOPES = ['https://www.googleapis.com/auth/gmail.readonly']
 # Lock to prevent concurrent sync operations which can cause port conflicts during auth
 sync_lock = threading.Lock()
 
-def get_credentials():
-    """
-    Returns valid user credentials.
-    """
-    creds = None
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-            creds = flow.run_local_server(port=8081)
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
-    return creds
-
 def get_gmail_service():
     """Shows basic usage of the Gmail API.
     Lists the user's Gmail labels.
     """
-    creds = get_credentials()
+    creds = None
+    # The file token.json stores the user's access and refresh tokens, and is
+    # created automatically when the authorization flow completes for the first
+    # time.
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    # If there are no (valid) credentials available, let the user log in.
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            if not os.path.exists('credentials.json'):
+                 raise FileNotFoundError("credentials.json not found. Please follow README instructions.")
+
+            flow = InstalledAppFlow.from_client_secrets_file(
+                'credentials.json', SCOPES)
+
+            # Try a range of safe ports to avoid "ERR_UNSAFE_PORT" (e.g. 6666 blocked by Chrome)
+            # and to handle "Address already in use"
+            ports_to_try = range(8080, 8100)
+            for port in ports_to_try:
+                try:
+                    creds = flow.run_local_server(port=port)
+                    break # Success
+                except OSError as e:
+                    if "Address already in use" in str(e) or "Only one usage of each socket address" in str(e) or e.errno == 98 or e.errno == 10048:
+                        if port == ports_to_try[-1]:
+                            raise RuntimeError("Could not find an open port for authentication (tried 8080-8099). Please close other apps using these ports.") from e
+                        continue # Try next port
+                    raise e
+
+        # Save the credentials for the next run
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
+
     service = build('gmail', 'v1', credentials=creds)
     return service
 
@@ -71,59 +87,6 @@ def parse_date(date_str):
         print(f"Error parsing date {date_str}: {e}")
         return datetime.now()
 
-def fetch_and_parse_message(creds, msg_id):
-    """
-    Fetches and parses a single message. Running in a thread.
-    Returns a dict with data or None if failed.
-    """
-    try:
-        # Build a thread-local service
-        service = build('gmail', 'v1', credentials=creds)
-        msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
-
-        payload = msg.get('payload', {})
-        headers = payload.get('headers', [])
-        
-        subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "No Subject")
-        sender = next((h['value'] for h in headers if h['name'] == 'From'), "Unknown Sender")
-        date_str = next((h['value'] for h in headers if h['name'] == 'Date'), "")
-        date_obj = parse_date(date_str)
-
-        # Extract Body
-        body_content = ""
-        parts = payload.get('parts', [])
-        
-        if parts:
-            for part in parts:
-                if part['mimeType'] == 'text/html':
-                    data = part['body'].get('data')
-                    if data:
-                        body_content = base64.urlsafe_b64decode(data).decode('utf-8')
-                        break # Prefer HTML
-                elif part['mimeType'] == 'text/plain':
-                    data = part['body'].get('data')
-                    if data:
-                        body_content = base64.urlsafe_b64decode(data).decode('utf-8')
-        else:
-             # Multipart/alternative might not be at top level, or it's a simple message
-            data = payload.get('body', {}).get('data')
-            if data:
-                body_content = base64.urlsafe_b64decode(data).decode('utf-8')
-
-        if body_content:
-            clean_body = clean_text(body_content)
-            return {
-                'gmail_id': msg_id,
-                'sender': sender,
-                'subject': subject,
-                'date_received': date_obj,
-                'content_text': clean_body
-            }
-    except Exception as e:
-        print(f"Error processing message {msg_id}: {e}")
-        return None
-    return None
-
 def sync_gmail():
     # Use lock to ensure only one sync happens at a time
     if not sync_lock.acquire(blocking=False):
@@ -136,12 +99,25 @@ def sync_gmail():
 
 def _sync_gmail_impl():
     service = get_gmail_service()
-    creds = get_credentials()
     session = get_session()
 
     # Get user settings for label
     label_setting = session.query(Settings).filter_by(key='gmail_label').first()
     user_label = label_setting.value if label_setting else None
+
+    query_parts = []
+    if user_label:
+        query_parts.append(f"label:{user_label}")
+
+    # Also look for unsubscribe in body if no label or in addition?
+    # Requirement: "find email where unsubscribe word is there"
+    # The user said: "find email where unsubscribe word is there, + add text box support for user where they can add label, so system should look into that label and unsubscribe word"
+    # This implies OR logic or maybe AND?
+    # "group by sender" -> suggests we want a broad net.
+    # Let's search for EITHER: has the label OR has "unsubscribe"
+
+    # Gmail search operator for OR is {query1 query2}
+    # But checking for unsubscribe in content is `content:unsubscribe` or just `unsubscribe`
 
     search_query = ""
     if user_label:
@@ -151,79 +127,70 @@ def _sync_gmail_impl():
 
     print(f"Searching with query: {search_query}")
 
-    total_new_count = 0
-    page_token = None
-    
-    # Process in chunks (pages)
-    while True:
-        try:
-            results = service.users().messages().list(userId='me', q=search_query, pageToken=page_token, maxResults=50).execute()
-        except Exception as e:
-            print(f"Error fetching page: {e}")
-            break
+    # Fetch messages (limit to last 50 for now to keep it minimal/fast)
+    results = service.users().messages().list(userId='me', q=search_query, maxResults=50).execute()
+    messages = results.get('messages', [])
 
-        messages = results.get('messages', [])
-        page_token = results.get('nextPageToken')
+    new_count = 0
 
-        if not messages:
-            if not page_token:
-                break
-            continue
+    if not messages:
+        print("No messages found.")
+    else:
+        for message in messages:
+            msg_id = message['id']
 
-        print(f"Processing batch of {len(messages)} messages...")
-        
-        # Filter out already existing messages BEFORE threading to save API calls
-        # fetches all existing IDs in this batch
-        msg_ids = [m['id'] for m in messages]
-        existing_db = session.query(Newsletter.gmail_id).filter(Newsletter.gmail_id.in_(msg_ids)).all()
-        existing_ids = set(r[0] for r in existing_db)
-        
-        to_process_ids = [mid for mid in msg_ids if mid not in existing_ids]
+            # Check if already exists
+            existing = session.query(Newsletter).filter_by(gmail_id=msg_id).first()
+            if existing:
+                continue
 
-        if not to_process_ids:
-            print("All messages in this batch already exist. Moving to next page.")
-            if not page_token:
-                break
-            continue
+            # Fetch full message
+            msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
 
-        # Threaded processing for the new messages
-        new_newsletters_data = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            # Pass creds so each thread builds its own service
-            future_to_id = {executor.submit(fetch_and_parse_message, creds, mid): mid for mid in to_process_ids}
-            
-            for future in concurrent.futures.as_completed(future_to_id):
-                result = future.result()
-                if result:
-                    new_newsletters_data.append(result)
+            headers = msg['payload']['headers']
+            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "No Subject")
+            sender = next((h['value'] for h in headers if h['name'] == 'From'), "Unknown Sender")
+            date_str = next((h['value'] for h in headers if h['name'] == 'Date'), "")
+            date_obj = parse_date(date_str)
 
-        # Bulk Insert (or one by one) in Main Thread
-        for data in new_newsletters_data:
-            new_newsletter = Newsletter(
-                gmail_id=data['gmail_id'],
-                sender=data['sender'],
-                subject=data['subject'],
-                date_received=data['date_received'],
-                content_text=data['content_text']
-            )
-            session.add(new_newsletter)
-            total_new_count += 1
-            try:
-                print(f"Imported: {data['subject']} ({data['sender']})")
-            except Exception:
-                # Safe print for consoles that don't support special characters
-                safe_subject = data['subject'].encode('ascii', 'replace').decode('ascii')
-                safe_sender = data['sender'].encode('ascii', 'replace').decode('ascii')
-                print(f"Imported: {safe_subject} ({safe_sender})")
+            # Extract Body
+            body_content = ""
+            if 'parts' in msg['payload']:
+                for part in msg['payload']['parts']:
+                    if part['mimeType'] == 'text/html':
+                        data = part['body'].get('data')
+                        if data:
+                            body_content = base64.urlsafe_b64decode(data).decode('utf-8')
+                            break # Prefer HTML
+                    elif part['mimeType'] == 'text/plain':
+                        data = part['body'].get('data')
+                        if data:
+                            body_content = base64.urlsafe_b64decode(data).decode('utf-8')
+            else:
+                 # Multipart/alternative might not be at top level, or it's a simple message
+                data = msg['payload']['body'].get('data')
+                if data:
+                    body_content = base64.urlsafe_b64decode(data).decode('utf-8')
 
-        # Commit per page/batch
-        session.commit()
-        print(f"Batch committed. Total new so far: {total_new_count}")
+            if body_content:
+                clean_body = clean_text(body_content)
 
-        if not page_token:
-            break
-            
-    return total_new_count
+                # Check for unsubscribe word again in parsed text to be sure?
+                # The Gmail search API is good, but let's trust it.
+
+                new_newsletter = Newsletter(
+                    gmail_id=msg_id,
+                    sender=sender,
+                    subject=subject,
+                    date_received=date_obj,
+                    content_text=clean_body
+                )
+                session.add(new_newsletter)
+                new_count += 1
+                print(f"Imported: {subject}")
+
+    session.commit()
+    return new_count
 
 if __name__ == '__main__':
     # For testing purposes

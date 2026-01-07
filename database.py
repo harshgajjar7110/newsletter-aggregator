@@ -12,8 +12,10 @@ class Newsletter(Base):
     subject = Column(String(255))
     date_received = Column(DateTime)
     content_text = Column(Text)
+    # audio_path deprecated in favor of Web Speech API
     audio_path = Column(String(255), nullable=True)
     gmail_id = Column(String(255), unique=True) # To prevent duplicate syncs
+    status = Column(String(50), default='unread') # unread, in_progress, done
 
     def __repr__(self):
         return f"<Newsletter(sender='{self.sender}', subject='{self.subject}')>"

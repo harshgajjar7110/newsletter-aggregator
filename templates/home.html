@@ -1,28 +1,49 @@
 {% extends 'base.html' %}
 
 {% block content %}
-    <h2>My Newsletters</h2>
+    <div class="tabs">
+        <div class="tab active" data-target="tab-queue">Queue (Unread)</div>
+        <div class="tab" data-target="tab-listening">Listening Now</div>
+    </div>
 
-    {% if grouped_newsletters %}
-        {% for sender, newsletters in grouped_newsletters.items() %}
-            <div class="sender-group" style="margin-bottom: 30px;">
-                <h3 style="border-bottom: 2px solid #eee; padding-bottom: 5px;">
-                    {{ sender }} <small style="color: #888; font-weight: normal; font-size: 0.8em;">({{ newsletters|length }})</small>
-                </h3>
-                <div class="newsletter-list">
-                    {% for newsletter in newsletters %}
-                        <div class="card" style="margin-left: 15px; border-left: 3px solid #ddd;">
-                            <h4><a href="/newsletter/{{ newsletter.id }}">{{ newsletter.subject }}</a></h4>
-                            <p style="font-size: 0.9em; color: #666;">
-                                Received: {{ newsletter.date_received.strftime('%Y-%m-%d %H:%M') }}
-                            </p>
-                        </div>
-                    {% endfor %}
+    <!-- Tab 1: Unread Stacks -->
+    <div id="tab-queue" class="tab-content active">
+        <div class="sender-list">
+            {% for sender, count in unread_stats %}
+                <div class="card stack-card">
+                    <h3>
+                        <a href="/sender/{{ sender }}" style="color: var(--text-color); text-decoration: none;">
+                            {{ sender }}
+                        </a>
+                        <span class="badge">{{ count }}</span>
+                    </h3>
+                    <p>Unread Newsletters</p>
+                </div>
+            {% else %}
+                <div style="text-align: center; color: #777; padding: 40px;">
+                    <p>No unread newsletters found.</p>
+                    <p>Sync to fetch new emails.</p>
+                </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Tab 2: In Progress -->
+    <div id="tab-listening" class="tab-content">
+        {% for newsletter in in_progress %}
+            <div class="card">
+                <h3><a href="/newsletter/{{ newsletter.id }}">{{ newsletter.subject }}</a></h3>
+                <p>
+                    <strong>From:</strong> {{ newsletter.sender }} <br>
+                    <strong>Date:</strong> {{ newsletter.date_received.strftime('%Y-%m-%d') }}
+                </p>
+                <div style="margin-top: 10px;">
+                    <a href="/newsletter/{{ newsletter.id }}" class="btn btn-primary">Continue Listening</a>
                 </div>
             </div>
+        {% else %}
+            <p style="text-align: center; color: #777; padding: 20px;">No active listening sessions.</p>
         {% endfor %}
-    {% else %}
-        <p>No newsletters found. <a href="/sync">Sync now</a> to get started!</p>
-    {% endif %}
+    </div>
 
 {% endblock %}
